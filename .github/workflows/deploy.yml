@@ -12,21 +12,20 @@ jobs:
   build-and-push:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Log in to Docker Hub
-      run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+      - name: Log in to Docker Hub
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
-    - name: Build and Push Docker Image
-      run: |
-        docker build -t $IMAGE_NAME:$IMAGE_TAG .
-        docker push $IMAGE_NAME:$IMAGE_TAG
+      - name: Build & push image
+        run: |
+          docker build -t $IMAGE_NAME:$IMAGE_TAG .
+          docker push $IMAGE_NAME:$IMAGE_TAG
 
   deploy:
     name: Deploy to Kubernetes (via Minikube)
@@ -34,40 +33,58 @@ jobs:
     needs: build-and-push
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-    - name: Start Minikube
-      uses: medyagh/setup-minikube@latest
-      with:
-        # optional config, you can adjust driver, memory, kubernetes-version etc
-        driver: docker
-        memory: 2048m
-        cpus: 2
-        kubernetes-version: stable
+      - name: Start Minikube
+        uses: medyagh/setup-minikube@latest
+        with:
+          driver: docker
+          memory: 2048m
+          cpus: 2
+          kubernetes-version: stable
 
-    - name: Use Minikube’s Docker daemon
-      run: |
-        # Let subsequent docker and kubectl commands talk to Minikube’s docker
-        eval $(minikube --profile minikube docker-env)
+      - name: Debug — Minikube status & info
+        run: |
+          echo "=== minikube status ==="
+          minikube status
+          echo "=== kubectl cluster-info ==="
+          kubectl cluster-info || true
+          echo "=== kubectl version (client & server) ==="
+          kubectl version --short || true
+          echo "=== minikube ip & logs ==="
+          minikube ip
+          minikube logs | head -n 50
 
-    - name: Set up kubectl
-      uses: azure/setup-kubectl@v3
-      with:
-        version: 'latest'
+      - name: Use Minikube’s Docker daemon
+        run: |
+          eval $(minikube docker-env)
 
-    - name: Configure kubeconfig
-      run: |
-        mkdir -p $HOME/.kube
-        echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 -d > $HOME/.kube/config
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
 
-    - name: Apply Kubernetes Manifests
-      run: |
-        kubectl apply -f k8s/deployment.yaml --validate=false
-        kubectl apply -f k8s/service.yaml --validate=false
+      - name: Configure kubecontext
+        run: |
+          # Use the minikube context
+          kubectl config use-context minikube
 
-    - name: Verify Deployment Status
-      run: |
-        kubectl rollout status deployment/wisecow-deployment
-        kubectl get pods
-        kubectl get svc
+      - name: Wait for Kubernetes API to be ready
+        run: |
+          for i in {1..30}; do
+            kubectl version --short && break
+            echo "Waiting for API server..."
+            sleep 2
+          done
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/deployment.yaml --validate=false
+          kubectl apply -f k8s/service.yaml --validate=false
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/wisecow-deployment --timeout=120s
+          kubectl get pods
+          kubectl get svc
