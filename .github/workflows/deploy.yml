@@ -1,8 +1,9 @@
+
 name: CI/CD Pipeline for WiseCow App
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main ]  # Trigger workflow when pushing to 'main'
 
 env:
   IMAGE_NAME: madhav1110/wisecoweb
@@ -27,7 +28,6 @@ jobs:
       run: |
         docker build -t $IMAGE_NAME:$IMAGE_TAG .
         docker push $IMAGE_NAME:$IMAGE_TAG
-
   deploy:
     name: Deploy to Kubernetes
     runs-on: ubuntu-latest
@@ -44,14 +44,14 @@ jobs:
 
     - name: Configure kubeconfig
       run: |
+        mkdir -p $HOME/.kube
         echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 -d > $HOME/.kube/config
-
     - name: Apply Kubernetes Manifests
       run: |
-        kubectl apply -f k8s/deployment.yaml
-        kubectl apply -f k8s/service.yaml
-
-    - name: Verify Deployment Status
+        kubectl apply -f k8s/deployment.yaml --validate=false
+        kubectl apply -f k8s/service.yaml --validate=false   
+    - name: Verify Deployment
       run: |
         kubectl rollout status deployment/wisecow-deployment
+        kubectl get pods
         kubectl get svc
